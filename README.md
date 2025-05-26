@@ -469,8 +469,129 @@ El ciclo de vida de un contenedor Docker se refiere a las diferentes etapas por 
   * `Descripción`: Elimina el contenedor del disco. Se borran la capa de escritura del contenedor y todos sus metadatos asociados. Importante: Un contenedor debe estar en estado Exited (detenido) para poder ser eliminado. Si está Running, primero debes detenerlo (docker stop) o forzar la eliminación (docker rm -f).
 
 
+<a id="redes-en-docker"></a>
+## Redes en Docker
+Docker, por defecto, **crea y gestiona redes virtuales que permiten a los contenedores comunicarse de forma aislada y segura**. Estas redes se construyen utilizando las capacidades de namespaces de red del kernel de Linux, lo que proporciona a cada contenedor su propia pila de red independiente.
 
-- [Redes en Docker](#redes-en-docker)
-  - [Tipos de redes en Docker](#tipos-de-redes)
-  - [Publicación de puertos](#publicacion-de-puertos)
-  - [DNS y descubrimiento de servicios](#dns-y-descubrimiento-de-servicios)
+<a id="tipos-de-redes)"></a>
+### Tipos de redes en Docker
+
+1. Red bridge (por defecto):
+
+  * `Descripción`: Es la red predeterminada cuando se instala Docker. Si no especificas una red al ejecutar un contenedor, se conectará a la red bridge por defecto.
+  * `Funcionamiento`: Docker crea un dispositivo de red virtual de tipo bridge (puente) en el host (comúnmente llamado docker0). Cada contenedor conectado a esta red obtiene su propia interfaz de red virtual que se conecta a este puente. **El puente docker0 actúa como un enrutador virtual, permitiendo la comunicación entre los contenedores conectados a él**.
+  * `Consideraciones`: Es adecuada para contenedores aislados o para un grupo pequeño de contenedores que necesitan comunicarse entre sí en un mismo host. Sin embargo, para aplicaciones multi-servicio que necesitan comunicación por nombre de servicio, o para comunicación entre hosts, no es la opción ideal.
+
+2. Redes definidas por el usuario (User-defined Bridge Networks):
+
+  * `Descripción`: Son redes bridge personalizadas que **se crean explícitamente con docker network create**. Estas son las redes recomendadas para aplicaciones multi-servicio en un solo host.
+  * `Funcionamiento`: Son similares a la red bridge por defecto, pero con una diferencia crucial: **proporcionan resolución DNS automática entre contenedores**.
+  * `Comunicación`: Los contenedores conectados a la misma red definida por el usuario **pueden comunicarse entre sí utilizando sus nombres de contenedor** (o nombres de servicio en Docker Compose) como nombres de host, gracias a un servidor DNS integrado de Docker.
+  * `Ventajas`:
+      - `Mejor aislamiento`: Proporcionan un mejor aislamiento que la red bridge por defecto, ya que solo los contenedores conectados a esa red pueden verse entre sí.
+      - `Descubrimiento de servicios`: Facilitan la comunicación entre microservicios sin necesidad de conocer las IPs dinámicas.
+
+3. Red overlay (para Docker Swarm y Kubernetes):
+
+  * `Descripción`: Estas redes están diseñadas para permitir la comunicación entre contenedores que se ejecutan en diferentes Docker Hosts en un clúster. Son fundamentales para la orquestación.
+  * `Funcionamiento`: El driver overlay utiliza tecnologías como VxLAN para crear una red virtual distribuida que se extiende por múltiples hosts. Cada host en el clúster puede ver los contenedores de otros hosts como si estuvieran en la misma red local.
+  * `Casos de uso`: Es el tipo de red utilizado por Docker Swarm para la comunicación entre servicios y también por Kubernetes para su modelo de red.
+
+<a id="publicacion-de-puertos"></a>
+### Publicación de puertos
+La publicación de puertos (también conocida como port forwarding o port mapping) **es el mecanismo por el cual los puertos de un contenedor en ejecución se mapean a puertos en el host de Docker**. Esto permite que los servicios que se ejecutan dentro del contenedor sean accesibles desde fuera del host de Docker (ya sea desde la red local del host o desde Internet)
+
+¿Por qué es necesario?
+Por defecto, los contenedores están aislados en su propia red. **Si se ejecuta un servidor web en el puerto 80 dentro de un contenedor, ese puerto solo es accesible desde dentro de la red Docker** a la que está conectado el contenedor. Para que el navegador o cualquier cliente externo pueda acceder a ese servidor web, se necesita "publicar" el puerto del contenedor en el host.
+
+El argumento -p o --publish se utiliza para publicar puertos. Su sintaxis general es:
+  * `docker run -p <puerto_del_host>:<puerto_del_contenedor> <imagen>`
+
+`<puerto_del_host>`: El puerto en el sistema operativo del host **donde deseas que el servicio del contenedor sea accesible**.
+`<puerto_del_contenedor>`: El puerto en el que el servicio dentro del contenedor está escuchando.
+
+> EXPOSE vs. PUBLISH (-p):
+
+- `EXPOSE (en Dockerfile)`: Es solo una instrucción de metadatos en el Dockerfile que documenta qué puertos espera exponer la aplicación dentro del contenedor. **No publica el puerto automáticamente. Sirve como una pista para el operador del contenedor**.
+- `PUBLISH (-p en docker run)`: Es el comando **real que realiza el mapeo del puerto del contenedor al puerto del host**, haciendo que el servicio sea accesible desde el exterior.
+
+<a id="dns-y-descubrimiento-de-servicios"></a>
+### DNS y descubrimiento de servicios
+
+El descubrimiento de servicios es la capacidad de una aplicación para encontrar y comunicarse con otras aplicaciones o servicios en una red. En el contexto de Docker, esto se refiere a cómo los contenedores pueden localizarse y conectarse entre sí.
+
+1. Resolución DNS en redes bridge definidas por el usuario:
+Los contenedores conectados a esta red pueden comunicarse entre sí utilizando sus nombres de contenedor como nombres de host. Docker resuelve automáticamente estos nombres de host a las direcciones IP internas de los contenedores.
+```
+  docker network create my-app-network
+  docker run -d --name db-container --network my-app-network postgres:latest
+  docker run -d --name app-container --network my-app-network my-web-app:latest
+```
+Dentro de app-container, puedes conectarte a la base de datos usando el nombre de host db-container, y Docker se encargará de resolverlo a la IP correcta.
+
+2. Docker Compose y Descubrimiento de Servicios:
+
+Docker Compose hace un uso extensivo de las redes definidas por el usuario. Cuando se definen múltiples servicios en un archivo docker-compose.yml, **Compose automáticamente crea una red para esos servicios**. Dentro de esa red, los servicios pueden comunicarse entre sí usando sus nombres de servicio (tal como los defines en el docker-compose.yml) como nombres de host.
+
+```
+# docker-compose.yml
+version: '3.8'
+services:
+  web:
+    image: my-web-app:latest
+    ports:
+      - "80:80"
+  db:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: mydatabase
+```
+En este ejemplo, la aplicación web podría conectarse a la base de datos usando el nombre de host db, y Compose se encargaría de la resolución DNS.
+
+<a id="almacenamiento-en-docker"></a>
+## Almacenamiento en Docker
+
+El sistema de archivos de un contenedor es efímero. Cuando un contenedor se detiene y se elimina, todos los cambios realizados en su capa de escritura se pierden. Esto es intencional, ya que promueve la filosofía de infraestructura inmutable y la facilidad de reemplazo de contenedores. Sin embargo, la mayoría de las aplicaciones necesitan almacenar datos de forma persistente (bases de datos, logs, configuraciones de usuario, etc.).
+
+Docker proporciona varias opciones para persistir datos y montarlos en contenedores, cada una con sus propios casos de uso y características. 
+
+<a id="volumes"></a>
+### Volúmenes (volumes)
+Los volúmenes son el mecanismo preferido y **recomendado por Docker para persistir datos generados y utilizados por los contenedores**.
+
+Un volumen existe independientemente del ciclo de vida de cualquier contenedor. Puedes detener y eliminar un contenedor, y el volumen y sus datos permanecerán intactos, listos para ser utilizados por un nuevo contenedor.
+
+> Volúmenes Nombrados (Named Volumes)
+  * `Creación`: Se crean explícitamente con un nombre (ej. docker volume create my-data).
+  *  `Uso`: Se montan en un contenedor especificando su nombre.
+
+> Ejemplo 
+```
+# Crear un volumen nombrado
+docker volume create my-db-data
+
+# Usar el volumen en un contenedor PostgreSQL
+docker run -d --name my-postgres \
+    -e POSTGRES_PASSWORD=mysecretpassword \
+    -v my-db-data:/var/lib/postgresql/data \
+    postgres:latest
+```
+  
+En este ejemplo, my-db-data es el nombre del volumen, y se monta dentro del contenedor en la ruta /var/lib/postgresql/data. Todos los datos de PostgreSQL se escribirán en este volumen persistente.
+
+
+<a id="backups-en-contenedores"></a>
+### Backups de datos de contenedores
+Dado que los contenedores son efímeros, la persistencia de datos a través de volúmenes es solo el primer paso. Para **garantizar la seguridad y la recuperación de datos, es fundamental tener una estrategia de backups**.
+
+<a id="mount-bindings"></a>
+### Mount Bindings
+Los Bind Mounts (Montajes de Enlace) son el mecanismo de almacenamiento más antiguo en Docker y **ofrecen una forma de montar un archivo o directorio existente del sistema de archivos del host directamente dentro de un contenedor**.
+
+A diferencia de los volúmenes, los bind mounts **no son gestionados por Docker. Uno mismo es responsable de la ubicación del archivo o directorio en el host**.
+
+<a id="tmpfs-mounts"></a>
+### tmpfs Mounts
+
+<a id="drivers-de-almacenamiento"></a>
+### Drivers de almacenamiento
