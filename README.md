@@ -24,7 +24,6 @@
   - [Capas de imágenes](#capas-de-imagenes)
   - [Registro de contenedores](#registro-de-contenedores)
   - [Etiquetado de imágenes](#etiquetado-de-imagenes)
-  - [Optimización de imágenes](#optimizacion-de-imagenes)
   - [Ciclo de vida de un contenedor](#ciclo-de-vida-de-un-contenedor)
 - [Redes en Docker](#redes-en-docker)
   - [Tipos de redes en Docker](#tipos-de-redes)
@@ -232,3 +231,246 @@ Los Union File Systems (UnionFS) son sistemas de archivos que permiten **superpo
 > 3. `Construcción de Imágenes Rápida`: Al construir nuevas imágenes con Dockerfiles, Docker solo necesita construir y añadir las capas que son nuevas, reutilizando las capas existentes si las instrucciones no han cambiado.
 
 En resumen, UnionFS es la tecnología que permite a Docker construir imágenes en capas, compartirlas eficientemente, y proporcionar una capa de escritura efímera para cada contenedor, lo que contribuye a la ligereza, velocidad y portabilidad de los contenedores.
+
+<a id="imagenes-de-docker"></a>
+## Imágenes de Docker
+El propósito principal de una imagen de Docker es proporcionar un entorno ejecutable consistente y portátil para una aplicación, garantizando que se ejecutará de la misma manera en cualquier lugar donde se despliegue.
+
+<a id="que-es-una-imagen-de-docker"></a>
+### ¿Qué es una Imagen de Docker?
+
+Una Imagen de Docker es **una plantilla de solo lectura** que contiene un conjunto de **instrucciones para crear un contenedor**. Pensemos en ella como una "clase" en programación orientada a objetos, mientras que un contenedor sería una "instancia" de esa clase.
+
+Más específicamente, una imagen incluye:
+
+- `Un sistema de archivos raíz`: Una instantánea del sistema de archivos de un sistema operativo (por ejemplo, una versión mínima de Ubuntu o Alpine Linux).
+- `El código de tu aplicación`: Tus archivos ejecutables, scripts, etc.
+- `Bibliotecas, dependencias y herramientas`: Todas las librerías de terceros y utilidades de sistema que tu aplicación necesita para funcionar.
+- `Metadatos`: Información sobre la imagen, como los puertos que expone, los volúmenes que utiliza, el comando por defecto para ejecutar al iniciar un contenedor, y las variables de entorno.
+
+> [!NOTE]
+> **Las imágenes son inmutables**; una vez que se crea una imagen, no puede ser modificada. Si se necesita cambiar algo, entonces, se debe de crear una nueva imagen.
+
+<a id="dockerfiles"></a>
+### Dockerfiles
+Un Dockerfile **es un script de texto que contiene una serie de instrucciones y argumentos para construir una imagen de Docker**. Cuando se ejecuta el comando docker build y se le está apuntado a un Dockerfile, Docker lee las instrucciones de arriba hacia abajo y las ejecuta en secuencia para crear la imagen.
+
+> Ejemplo
+```
+# Dockerfile
+
+# Usa una imagen base de Node.js en la versión 18
+FROM node:18-alpine
+
+# Establece el directorio de trabajo dentro del contenedor
+WORKDIR /app
+
+# Copia los archivos de configuración de dependencias primero
+COPY package*.json ./
+
+# Instala las dependencias del proyecto
+RUN npm install
+
+# Copia el resto del código de la aplicación
+COPY . .
+
+# Expone el puerto 3000 del contenedor
+EXPOSE 3000
+
+# Comando para ejecutar la aplicación cuando el contenedor se inicia
+CMD ["npm", "start"]
+```
+
+> Instrucciones comunes en Dockerfiles
+
+1. `FROM`: Define la imagen base sobre la cual se construirá la nueva imagen. Es la primera instrucción y obligatoria
+2. `LABEL`: Añade metadatos a una imagen (autor, versión, etc.)
+3. `WORKDIR`: Establece el directorio de trabajo para las siguientes instrucciones RUN, CMD, ENTRYPOINT, COPY, ADD
+4. `COPY`: Copia archivos o directorios desde el host al sistema de archivos de la imagen
+5. `ADD`: Similar a COPY, pero con funciones adicionales como la extracción automática de archivos tar o el manejo de URLs remotas
+6. `RUN`: Ejecuta un comando en una nueva capa sobre la imagen actual y "commitea" el resultado. Utilizado para instalar paquetes, compilar código, etc
+7. `ENV`: Establece variables de entorno que estarán disponibles dentro del contenedor.
+8. `ARG`: Define variables que se pueden pasar en tiempo de construcción del Dockerfile (con docker build --build-arg)
+9. `EXPOSE`: Informa a Docker que el contenedor escuchará en los puertos de red especificados en tiempo de ejecución. No publica el puerto automáticamente.
+10. `CMD`: Proporciona comandos predeterminados o argumentos para un contenedor en ejecución. **Solo puede haber un CMD por Dockerfile; si se especifica más de uno, solo el último tendrá efecto**
+11. `VOLUME`: Crea un punto de montaje para volúmenes de datos persistentes.
+
+<a id="imagen-base-vs-derivada"></a>
+#### Imágen base vs Imágen derivada
+
+> Imagen Base (Base Image)
+
+* Es la imagen que sirve como punto de partida para el Dockerfile y es especificada por la instrucción FROM.
+* `Contiene un sistema operativo mínimo (como Alpine, Ubuntu, Debian slim)` y, a menudo, un entorno de ejecución específico `(como node, python, openjdk, golang)`.
+* Son imágenes que no tienen una instrucción FROM propia; su primera instrucción es generalmente la capa FROM scratch (una imagen completamente vacía) o son construidas directamente a partir de un sistema de archivos raíz de Linux.
+
+> Imagen Derivada (Derived Image):
+
+* Es la imagen que construyes a partir de una imagen base, añadiéndole tus aplicaciones, configuraciones y dependencias adicionales.
+* `Es el resultado de ejecutar docker build sobre un Dockerfile` que comienza con una instrucción FROM apuntando a una imagen base.
+* `Ejemplos`: Una imagen que contiene tu aplicación web de Node.js construida sobre node:18-alpine, o una imagen con tu API de Python sobre python:3.9-slim.
+
+En resumen, la imagen derivada "hereda" las capas de la imagen base y añade sus propias capas encima.
+
+<a id="multistage-builds"></a>
+#### Multistage builds (Construcciones Multi-Etapa)
+
+Las Multistage Builds son una característica avanzada de Dockerfiles introducida para abordar el problema de las "imágenes gordas" (fat images). Antes de las construcciones multi-etapa, a menudo se necesitaba incluir todas las herramientas de compilación, bibliotecas de desarrollo y dependencias transitorias en tu imagen final, lo que resultaba en imágenes de gran tamaño que eran lentas de construir, descargar y tenían una superficie de ataque de seguridad más amplia.
+
+Una construcción multi-etapa **permite definir múltiples etapas FROM en un solo Dockerfile**. **Cada FROM comienza una nueva etapa de construcción**. Se puede copiar artefactos de una etapa anterior a una etapa posterior, dejando atrás todas las herramientas de construcción y dependencias intermedias que ya no son necesarias.
+
+> Ejemplo de Multistage Build (aplicación Go)
+```
+# Dockerfile
+
+# Primera etapa: la etapa de construcción (build stage)
+FROM golang:1.20-alpine AS builder
+
+WORKDIR /app
+
+# Copia el código fuente
+COPY . .
+
+# Compila la aplicación Go
+# La bandera -o especifica el nombre del binario de salida
+# La bandera -ldflags "-s -w" reduce el tamaño del binario y quita la información de depuración
+RUN CGO_ENABLED=0 go build -o myapp -ldflags "-s -w" .
+
+# Segunda etapa: la etapa final (production stage)
+# Utilizamos una imagen muy pequeña (scratch o alpine) para la imagen final
+FROM alpine:latest
+
+WORKDIR /root/
+
+# Copia el binario compilado de la etapa 'builder' a la etapa final
+COPY --from=builder /app/myapp .
+
+# Define el comando para ejecutar la aplicación
+CMD ["./myapp"]
+```
+
+- Explicación del ejemplo:
+
+1. FROM golang:1.20-alpine AS builder
+  * Inicia la primera etapa, nombrándola builder.
+  * Usa una imagen base de Go que contiene todas las herramientas de compilación.
+  * Aquí es donde se compila el código.
+
+2. RUN CGO_ENABLED=0 go build -o myapp -ldflags "-s -w" .
+  * Este comando compila la aplicación Go, generando un binario ejecutable llamado myapp.
+  * CGO_ENABLED=0 es importante para crear un binario estáticamente enlazado que no depende de bibliotecas del sistema operativo.
+
+3. FROM alpine:latest:
+  * Inicia la segunda etapa, que será la imagen final.
+  * Usa una imagen base extremadamente ligera (Alpine Linux, que es mínima).
+
+4. COPY --from=builder /app/myapp .
+  * Esta es la magia del multistage build. Copia el archivo myapp (el binario compilado) desde la etapa llamada builder al directorio de trabajo de la etapa actual.
+  * Todo lo demás de la etapa builder (el compilador Go, los archivos de origen, las dependencias de compilación) se descarta, ya que no son necesarios en la imagen final.
+
+<a id="capas-de-imagenes"></a>
+### Capas de imágenes
+
+Las Capas de Imágenes son la forma en que Docker organiza y almacena los diferentes componentes de una imagen. Como se mencionó con Union File Systems, **una imagen de Docker no es una entidad monolítica, sino una colección de capas de solo lectura apiladas una encima de la otra**.
+
+> Características clave de las capas:
+
+`Basadas en Instrucciones del Dockerfile`: Cada instrucción en un Dockerfile **(excepto CMD, ENTRYPOINT, LABEL, EXPOSE, USER, VOLUME, WORKDIR, ARG, que solo añaden metadatos o configuran el entorno para las siguientes capas)** crea una nueva capa en la imagen.
+
+- `Compartibles y Reutilizables`:
+  * Si múltiples imágenes usan la misma capa base (por ejemplo, ubuntu:latest), esa capa solo se almacena una vez en el disco del host.
+  * Durante el proceso docker build, Docker utiliza un cache de capas. Si una instrucción de Dockerfile y su contexto no han cambiado desde la última construcción, Docker reutilizará la capa existente en lugar de ejecutar la instrucción nuevamente. Esto acelera drásticamente las reconstrucciones. 
+
+> [!NOTE]
+> Una buena práctica es colocar las instrucciones que cambian con menos frecuencia (como la instalación de un SO base o dependencias del sistema) al principio del Dockerfile, y las instrucciones que cambian con frecuencia (como el código de tu aplicación) al final. Esto maximiza la reutilización de capas en construcciones sucesivas.
+
+<a id="registro-de-contenedores"></a>
+### Registro de contenedores
+
+Un Registro de Contenedores (Docker Registry) **es un sistema de almacenamiento y distribución centralizado para imágenes de Docker**. Es esencialmente una biblioteca o repositorio donde las imágenes de Docker se almacenan, organizan y se ponen a disposición para ser descargadas (pulled) por otros usuarios o sistemas.
+
+> Propósito y funcionalidad
+
+ * `Almacenamiento y versión`: Permite almacenar las imágenes de Docker de forma persistente, asociadas a nombres y etiquetas (versiones).
+ * `Distribución y colaboración`: Facilita que los desarrolladores compartan sus imágenes entre sí y con los entornos de producción. Es el mecanismo principal para "mover" imágenes entre diferentes hosts Docker.
+ * `Seguridad y control de acceso`: Los registros pueden implementar autenticación y autorización para controlar quién puede subir (push) o descargar (pull) imágenes.
+ * `Automatización de CI/CD`: Son un componente fundamental en los pipelines de Integración Continua/Despliegue Continuo (CI/CD), donde las imágenes recién construidas se suben al registro y luego se despliegan desde allí.
+
+1. Docker Hub (público):
+* Es el registro público predeterminado y más grande, mantenido por Docker Inc
+ * Contiene millones de imágenes, incluyendo:
+    - Imágenes Oficiales: Son imágenes mantenidas por los proveedores de software (ej., ubuntu, nginx, node, python, mysql). Están bien documentadas, parcheadas regularmente y construidas con las mejores prácticas
+    - Imágenes de la Comunidad: Subidas por usuarios individuales y organizaciones. Pueden variar en calidad y seguridad
+* Ofrece repositorios públicos y privados (estos últimos suelen requerir una suscripción de pago)
+  
+2. Registros privados (self-hosted o de proveedores cloud):
+* La mayoría de los proveedores de la nube ofrecen sus propios servicios de registro de contenedores gestionados:
+    - Amazon Elastic Container Registry (ECR)
+    - Google Container Registry (GCR) / Google Artifact Registry
+    - Azure Container Registry (ACR)
+    - Red Hat Quay.io
+
+Estos servicios ofrecen alta disponibilidad, escalabilidad, seguridad, integración con otros servicios de la nube y, a menudo, funciones adicionales como escaneo de vulnerabilidades.
+
+> Operaciones Comunes con un Registro:
+
+  * `docker login`: Autenticarse con un registro (ej., Docker Hub).
+  * `docker pull <nombre_imagen>[:tag]`: Descargar una imagen desde un registro.
+  * `docker push <nombre_imagen>[:tag]`: Subir una imagen a un registro. Requiere que la imagen esté etiquetada con el nombre del registro (ej., myregistry.com/myuser/myimage:v1.0).
+
+<a id="etiquetado-de-imagenes"></a>
+### Etiquetado de imágenes
+
+El Etiquetado de Imágenes es el proceso de asignar una o más "etiquetas" (tags) a una imagen de Docker. Una etiqueta es una cadena de texto (a menudo una versión, como v1.0, latest, dev, un hash de commit, o una fecha) que **se utiliza para identificar una versión específica de una imagen en un repositorio**.
+
+> Propósito y mejores prácticas:
+
+1. Versionado y control:
+  * `Despliegues controlados`: Saber qué versión exacta de una aplicación está desplegada en producción, pruebas o desarrollo.
+  * `Rollbacks`: Si una nueva versión tiene un problema, puedes volver fácilmente a una versión anterior estable usando su etiqueta.
+  * `Auditoría`: Rastrear el historial de cambios de una imagen.
+
+2. latest Tag:
+  * La etiqueta latest es una convención, no una garantía de que sea la última versión. **Es el valor predeterminado si no especificas una etiqueta**.
+  * Depender excesivamente de latest puede ser problemático en producción porque la imagen a la que apunta latest puede cambiar inesperadamente, llevando a entornos inconsistentes. Es preferible usar etiquetas explícitas y fijas (ej., 1.0.0, 1.0.1, 20250526-abcde).
+
+3. Múltiples Etiquetas: 
+  * Una misma imagen (identificada por su hash de contenido) puede tener múltiples etiquetas. Por ejemplo, **una nueva versión de tu aplicación podría tener v1.2.0 y también latest** (hasta que salga la siguiente versión)
+  * Comandos como docker tag <ID_de_imagen> <nuevo_nombre_completo_con_etiqueta> permiten añadir etiquetas a una imagen existente
+
+<a id="ciclo-de-vida-de-un-contenedor"></a>
+### Ciclo de vida de un contenedor
+El ciclo de vida de un contenedor Docker se refiere a las diferentes etapas por las que pasa un contenedor, desde su creación hasta su eliminación.
+
+1. Creación (Created)
+  * `Comando`: docker create <imagen>
+  * `Descripción`: Esta etapa crea un nuevo contenedor a partir de una imagen. En este punto, el contenedor existe en el disco con un sistema de archivos y una configuración inicial, pero aún no está en ejecución. Docker le asigna un ID único y un nombre (si no se especifica uno, Docker genera uno aleatorio).
+
+2. Arranque/Inicio (Running / Up)
+  * `Comando`: docker start <nombre_o_id_contenedor> o docker run <imagen> (que es create + start).
+  * `Descripción`: El contenedor pasa del estado Created o Exited al estado Running. El proceso principal del contenedor se inicia (el comando especificado en CMD o ENTRYPOINT del Dockerfile), y el contenedor comienza a ejecutar su aplicación. Los recursos de red y almacenamiento se activan.
+
+3. Pausa (Paused)
+  * `Comando`: docker pause <nombre_o_id_contenedor>
+  * `Descripción`: Suspende todos los procesos dentro de un contenedor en ejecución. El contenedor permanece en memoria, pero sus procesos se detienen temporalmente. Esto puede ser útil para depuración o para liberar momentáneamente recursos de CPU sin detener el contenedor por completo.
+
+4. `Reanudar`: docker unpause <nombre_o_id_contenedor> vuelve a Running.
+
+5. Detención (Stopped / Exited)
+  * `Comando`: docker stop <nombre_o_id_contenedor>
+  * `Descripción`: El contenedor se detiene, enviando una señal SIGTERM (por defecto, para un apagado gracioso) al proceso principal dentro del contenedor. Si el proceso no termina después de un tiempo de espera (por defecto 10 segundos), Docker envía una señal SIGKILL para forzar su terminación. Los recursos de CPU y memoria se liberan, pero el estado del contenedor (sistema de archivos de la capa de escritura y metadatos) persiste en el disco.
+
+6. Reinicio (Restarting):
+  * `Comando`: docker restart <nombre_o_id_contenedor>
+  * `Descripción`: Detiene un contenedor en ejecución y lo vuelve a iniciar. Es útil cuando necesitas aplicar cambios de configuración o resolver problemas temporales sin eliminar el contenedor.
+    
+7. Eliminación (Deleted):
+  * `Comando`: docker rm <nombre_o_id_contenedor>
+  * `Descripción`: Elimina el contenedor del disco. Se borran la capa de escritura del contenedor y todos sus metadatos asociados. Importante: Un contenedor debe estar en estado Exited (detenido) para poder ser eliminado. Si está Running, primero debes detenerlo (docker stop) o forzar la eliminación (docker rm -f).
+
+
+
+- [Redes en Docker](#redes-en-docker)
+  - [Tipos de redes en Docker](#tipos-de-redes)
+  - [Publicación de puertos](#publicacion-de-puertos)
+  - [DNS y descubrimiento de servicios](#dns-y-descubrimiento-de-servicios)
