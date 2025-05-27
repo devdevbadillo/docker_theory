@@ -37,6 +37,12 @@
   - [Seguridad de las Imágenes](#seguridad-de-las-imagenes)
   - [Seguridad del Host Docker](#seguridad-del-host-de-docker)
   - [Seguridad de los contenedores](#seguridad-de-los-contenedores)
+- [Docker Compose](#docker-compose)
+  - [Definición de aplicaciones multi-contenedor](#aplicaciones-multi-contenedor)
+  - [Orquestación básica](#orquestacion-basica)
+  - [Conceptos adicionales](#conceptos-adicionales)
+ 
+
 
 <a id="fundamentos-de-contenedores"></a>
 ## Fundamentos de Docker
@@ -674,3 +680,132 @@ CMD ["npm", "start"]
 
 3. Utiliza Volúmenes de Sólo Lectura (:ro):  si el contenedor solo necesita leer los datos, hay que montarlos como solo lectura (-v /host/path:/container/path:ro). Esto previene que un contenedor comprometido escriba en archivos del host o del volumen de forma maliciosa
 
+<a id="docker-compose"></a>
+## Docker Compose
+Docker Compose es una herramienta desarrollada por Docker Inc. que **permite definir y ejecutar aplicaciones multi-contenedor Docker**. Utiliza un archivo YAML (típicamente docker-compose.yml) para configurar todos los servicios, redes y volúmenes de la aplicación, y permite iniciar, detener y gestionar todos estos componentes con un solo comando.
+En lugar de ejecutar docker run y docker network create y docker volume create para cada componente de tu aplicación, lo defines todo una vez en un archivo y luego `docker compose up` se encarga del resto.
+
+<a id="aplicaciones-multi-contenedor"></a>
+### Definición de aplicaciones multi-contenedor
+El corazón de Docker Compose es el archivo docker-compose.yml. Este archivo es una descripción declarativa de cómo deben ser construidos, configurados y conectados los diferentes componentes de la aplicación.
+> Ejemplo
+```
+version: '3.8' # Versión de la sintaxis del archivo Compose
+
+services: # Define los servicios (contenedores) de la aplicación
+  web: # Nombre del servicio (será el nombre de host para otros servicios)
+    build: . # Opciones para construir la imagen desde un Dockerfile en el directorio actual
+    # image: my-app:latest # Alternativa: usar una imagen ya existente
+    ports:
+      - "80:80" # Mapeo de puertos: HOST_PORT:CONTAINER_PORT
+    depends_on: # Define las dependencias de inicio (no de disponibilidad)
+      - db
+    environment: # Variables de entorno pasadas al contenedor
+      DATABASE_URL: postgres://user:password@db:5432/mydb
+    networks: # A qué redes se conectará este servicio
+      - app-network
+
+  db: # Otro servicio, el de la base de datos
+    image: postgres:14-alpine # Usa una imagen de PostgreSQL
+    environment:
+      POSTGRES_DB: mydb
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes: # Monta un volumen persistente para los datos de la DB
+      - db-data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+volumes: # Define los volúmenes nombrados
+  db-data:
+
+networks: # Define las redes (user-defined bridge networks por defecto)
+  app-network:
+    driver: bridge # Opcional, bridge es el default
+```
+> Secciones principales de un docker-compose.yml
+
+1. `version`: Define la versión de la sintaxis de Compose. Es crucial para la compatibilidad y las características disponibles (la 3.8 es la más reciente y recomendada para la mayoría de los casos)
+2. `services`: Esta es la sección principal donde se definen los componentes de la aplicación. Cada entrada bajo services **representa un contenedor que Docker Compose gestionará**.
+    - Nombre del Servicio: Cada servicio tiene un nombre (ej., web, db). Este nombre se convierte en un nombre de host resoluble por DNS para otros servicios dentro de la misma red de Compose, lo que permite la comunicación fácil (ej., web puede conectarse a db usando db como hostname)
+    - Configuración del Servicio: Dentro de cada servicio, puedes especificar opciones que normalmente pasarías a docker run:
+      * `image`: La imagen de Docker a usar (ej., nginx:latest).
+      * `build`: Ruta al directorio que contiene el Dockerfile para construir la imagen. Se puede especificar context (ruta del Dockerfile) y dockerfile (nombre del Dockerfile si no es Dockerfile).
+      * `ports`: Mapeo de puertos entre el host y el contenedor.
+      * `volumes`: Montaje de volúmenes o bind mounts.
+      * `environment`: Variables de entorno pasadas al contenedor.
+      * `networks`: A qué redes definidas en el archivo el servicio debe conectarse.
+      * `depends_on`: Define las dependencias entre servicios. Por ejemplo, web depende de db significa que db se iniciará antes que web. Importante: Esto solo gestiona el orden de inicio, no la disponibilidad del servicio (es decir, no espera a que la base de datos esté lista para aceptar conexiones). Para eso, se necesitan mecanismos de salud check o entrypoint scripts.
+      * `restart`: Política de reinicio del contenedor (ej., always, on-failure, unless-stopped).
+      * `healthcheck`: Define cómo Docker debe verificar la salud del servicio (comandos, intervalos, tiempos de espera).
+      * `command, entrypoint`: Sobrescriben los comandos por defecto de la imagen.
+      * Y muchas otras opciones de docker run que se pueden configurar aquí
+        
+3. `volumes`: Define los volúmenes nombrados que serán persistentes para los servicios. Estos volúmenes son gestionados por Docker fuera del ciclo de vida del contenedor.
+4. `networks`: Define las redes personalizadas que los servicios usarán. Por defecto, **Compose crea una red bridge para todos los servicios en el archivo si no se especifica una**.
+
+<a id="orquestacion-basica"></a>
+### Orquestación básica
+Docker Compose proporciona un conjunto de comandos simples para gestionar toda tu aplicación multi-contenedor. Esta es una "orquestación básica" porque está diseñada principalmente para funcionar en un solo host Docker. 
+
+> Comandos clave de docker compose
+
+1. `docker compose up`
+- Propósito: Es el comando principal. Construye, (re)crea, inicia y adjunta a los contenedores de los servicios.
+
+- Funcionamiento:
+  * Lee el archivo docker-compose.yml (por defecto, si no se especifica otro con -f)
+  * Crea las redes y volúmenes definidos (si no existen).
+  * Inicia los servicios en el orden de las dependencias (depends_on).
+
+- Opciones Comunes:
+  * `-d (detached mode)`: Ejecuta los contenedores en segundo plano (detached).
+  * `--build`: Fuerza la reconstrucción de las imágenes de los servicios que tienen la instrucción build.
+  * `--force-recreate`: Recrea los contenedores incluso si no hay cambios en la configuración.
+  * `--remove-orphans`: Elimina los contenedores de servicios que ya no están definidos en el archivo Compose.
+  * `--scale <service_name>=<count>`: Escala un servicio a un número específico de réplicas (solo funciona en un solo host con docker compose, para orquestación real se usa deploy en Swarm).
+
+2. `docker compose down`
+- Propósito: Detiene y elimina los contenedores, redes y volúmenes que fueron creados por docker compose up.
+- Funcionamiento: Realiza una limpieza de los recursos asociados a la aplicación Compose.
+- Opciones Comunes:
+  * `--volumes (-v)`: También elimina los volúmenes nombrados definidos en el archivo Compose. Úsalo con precaución, ya que esto eliminará tus datos persistentes. Es útil para limpiar completamente un entorno de desarrollo.
+  * `--rmi all / --rmi local`: Elimina las imágenes construidas por Compose.
+
+3. `docker compose logs [service_name]`:
+- Propósito: Muestra los logs de los servicios.
+- Funcionamiento: Si no se especifica un service_name, muestra los logs de todos los servicios. Se puede usar -f para seguir los logs en tiempo real.
+
+4. `docker compose exec <service_name> <command>`:
+- Propósito: Ejecuta un comando arbitrario dentro de un contenedor en ejecución de un servicio.
+- Ejemplo: `docker compose exec web bash` (para abrir un shell en el contenedor web).
+
+5. `docker compose restart [service_name]`:
+- Propósito: Reinicia los servicios especificados (o todos si no se especifica ninguno).
+  
+6. `docker compose run <service_name> <command>`:
+- Propósito: Ejecuta un comando único en un nuevo contenedor de un servicio.
+- Funcionamiento: A diferencia de exec, que ejecuta en un contenedor existente, **run crea un nuevo contenedor temporal para ejecutar el comando y luego lo elimina**. Útil para tareas únicas como ejecutar migraciones de base de datos o scripts de una sola vez.
+
+<a id="conceptos-adicionales"></a>
+### Conceptos adicionales
+Para un entendimiento verdaderamente profundo, es importante considerar algunos aspectos más que rodean a Docker Compose:
+
+1. Variables de entorno en compose:
+  * Se pueden usar variables de entorno directamente en el archivo docker-compose.yml para hacer la configuración más dinámica (ej., ${MY_VAR}). Docker Compose busca un archivo .env en el mismo directorio que docker-compose.yml y carga automáticamente las variables definidas allí.
+
+2. Extensión de archivos compose (-f y extends):
+
+  * Se puede usar la opción -f para especificar múltiples archivos Compose. **Docker Compose los fusionará en el orden que fueron proporcionados**. Esto es útil para:
+    - Separar la configuración base de la específica de desarrollo/producción.
+    - Definir características específicas de un entorno (ej., un docker-compose.dev.yml con bind mounts y puertos de depuración).
+      
+  * La clave **extends** dentro de un servicio **permite heredar la configuración de otro servicio definido en el mismo o en otro archivo Compose**
+    
+> [!NOTE]
+> extends es menos flexible que -f con múltiples archivos y se ha vuelto menos común en favor de la combinación de archivos con -f
+
+3. Healthchecks (healthcheck):
+
+Como se mencionó, **depends_on solo asegura el orden de inicio, no la disponibilidad**. Los healthcheck son cruciales para que Docker (y Docker Compose) sepa si un servicio está realmente "sano" y listo para aceptar conexiones.
+ - Un healthcheck **define un comando que Docker ejecuta periódicamente dentro del contenedor**. Si el comando sale con código 0, el contenedor se considera sano; si es 1, no es sano.
