@@ -31,11 +31,12 @@
   - [DNS y descubrimiento de servicios](#dns-y-descubrimiento-de-servicios)
 - [Almacenamiento en Docker](#almacenamiento-en-docker)
   - [Volúmenes (volumes)](#volumes)
-  - [Backups de datos de contenedores](#backups-en-contenedores)
   - [Mount Bindings](#mount-bindings)
   - [tmpfs Mounts](#tmpfs-mounts)
-  - [Drivers de almacenamiento](#drivers-de-almacenamiento)
-
+- [Seguridad en Docker](#seguridad-en-docker)
+  - [Seguridad de las Imágenes](#seguridad-de-las-imagenes)
+  - [Seguridad del Host Docker](#seguridad-del-host-de-docker)
+  - [Seguridad de los contenedores](#seguridad-de-los-contenedores)
 
 <a id="fundamentos-de-contenedores"></a>
 ## Fundamentos de Docker
@@ -473,7 +474,7 @@ El ciclo de vida de un contenedor Docker se refiere a las diferentes etapas por 
 ## Redes en Docker
 Docker, por defecto, **crea y gestiona redes virtuales que permiten a los contenedores comunicarse de forma aislada y segura**. Estas redes se construyen utilizando las capacidades de namespaces de red del kernel de Linux, lo que proporciona a cada contenedor su propia pila de red independiente.
 
-<a id="tipos-de-redes)"></a>
+<a id="tipos-de-redes"></a>
 ### Tipos de redes en Docker
 
 1. Red bridge (por defecto):
@@ -580,18 +581,96 @@ docker run -d --name my-postgres \
 En este ejemplo, my-db-data es el nombre del volumen, y se monta dentro del contenedor en la ruta /var/lib/postgresql/data. Todos los datos de PostgreSQL se escribirán en este volumen persistente.
 
 
-<a id="backups-en-contenedores"></a>
-### Backups de datos de contenedores
-Dado que los contenedores son efímeros, la persistencia de datos a través de volúmenes es solo el primer paso. Para **garantizar la seguridad y la recuperación de datos, es fundamental tener una estrategia de backups**.
-
 <a id="mount-bindings"></a>
 ### Mount Bindings
 Los Bind Mounts (Montajes de Enlace) son el mecanismo de almacenamiento más antiguo en Docker y **ofrecen una forma de montar un archivo o directorio existente del sistema de archivos del host directamente dentro de un contenedor**.
 
 A diferencia de los volúmenes, los bind mounts **no son gestionados por Docker. Uno mismo es responsable de la ubicación del archivo o directorio en el host**.
 
+- Sintaxis del comando docker run -v (con bind mounts): `docker run -v <ruta_en_el_host>:<ruta_en_el_contenedor>[:opciones] <imagen>`
+
+`<ruta_en_el_host>`: La ruta absoluta (o relativa al directorio de trabajo actual) del archivo o directorio en el sistema de archivos del host.
+`<ruta_en_el_contenedor>`: La ruta donde se montará el archivo o directorio dentro del contenedor.
+
+> Ejemplo
+```
+# Montar el directorio actual del host (código fuente) en /app dentro del contenedor
+docker run -d --name my-dev-app \
+    -p 3000:3000 \
+    -v $(pwd):/app \
+    my-node-app:dev
+
+# Montar un archivo de configuración específico del host
+docker run -d --name my-nginx \
+    -p 80:80 \
+    -v $(pwd)/nginx.conf:/etc/nginx/nginx.conf:ro \
+    nginx:latest
+```
+* `:ro (read-only)`: Monta el bind mount como solo lectura dentro del contenedor, lo que es una buena práctica de seguridad para archivos de configuración.
+
+- Consideraciones:
+  * `Dependencia del Host`: Los bind mounts acoplan el contenedor al sistema de archivos del host, lo que reduce la portabilidad. **El contenedor solo funcionará si la ruta de host especificada existe y tiene los permisos correctos**.
+  * `Seguridad`: Al montar directorios del host, existe un riesgo de seguridad si el contenedor es comprometido, ya que **podría tener acceso a datos sensibles en el host**.
+    
 <a id="tmpfs-mounts"></a>
 ### tmpfs Mounts
+Los tmpfs mounts son montajes de sistemas de archivos temporales que **residen únicamente en la memoria RAM del host**. No escriben datos en el sistema de archivos subyacente del host ni del contenedor.
 
-<a id="drivers-de-almacenamiento"></a>
-### Drivers de almacenamiento
+> [!NOTE]
+>  - Los datos almacenados en un tmpfs mount se pierden cuando el contenedor se detiene o el host se reinicia.
+>  - Ideales para almacenar datos muy sensibles o temporales que no necesitan persistencia y que se benefician de la alta velocidad
+
+<a id="seguridad-en-docker"></a>
+## Seguridad en Docker
+La seguridad en Docker es un tema multifacético que requiere atención en varias capas, desde la construcción de las imágenes hasta la ejecución de los contenedores en el host. Ignorar cualquiera de estas capas puede introducir vulnerabilidades significativas.
+
+<a id="seguridad-de-las-imagenes"></a>
+### Seguridad de las Imágenes
+Las imágenes son la base de los contenedores, por lo que su seguridad es el primer y más crítico punto de control. Una imagen comprometida o mal construida puede llevar a vulnerabilidades en cascada. 
+
+> Consideraciones
+1. Siempre que sea posible, se recomienda el uso las imágenes oficiales de Docker Hub (como ubuntu, nginx, node, python, mysql). Son mantenidas por los proveedores de software, suelen estar parcheadas y construidas con mejores prácticas.
+2. Integrar herramientas de escaneo de imágenes en los pipeline de CI/CD. Estas herramientas analizan las capas de tus imágenes en busca de CVEs (Common Vulnerabilities and Exposures) conocidas.
+3. Nunca hay que hacer un hardcode concredenciales, claves API, tokens o información sensible directamente en el Dockerfile o en la imagen. Una vez en una capa de la imagen, son difíciles de eliminar y pueden ser extraídas.
+- Alternativas Seguras: 
+  * `Variables de entorno`: Pasa los secretos en tiempo de ejecución (ej., docker run -e MY_SECRET=value).
+  * `Sistemas de gestión de secretos`: Como Docker Secrets (para Swarm), Kubernetes Secrets, HashiCorp Vault, AWS Secrets Manager, Azure Key Vault.
+4. `Usar .dockerignore`: Este archivo le dice al demonio Docker qué archivos y directorios ignorar al copiar el contexto de construcción. Evita que archivos sensibles (ej., .git, .env, credentials.json), archivos de desarrollo, módulos (node_modules si los instalas dentro del contenedor) o artefactos de compilación innecesarios se copien a la imagen, reduciendo el tamaño y el riesgo.
+
+<a id="seguridad-del-host-de-docker"></a>
+### Seguridad del Host Docker
+El host Docker es la máquina subyacente donde se ejecutan los contenedores. Proteger este host es tan crucial como proteger los contenedores mismos, ya que un host comprometido puede llevar a la vulnerabilidad de todos los contenedores que se ejecutan en él.
+
+1. Mantener el sistema operativo del Host actualizado: Se debe de asegurar de que el sistema operativo del host (Linux, Windows Server) esté siempre parcheado y actualizado con los últimos parches de seguridad. Esto aborda las vulnerabilidades del kernel y las librerías del sistema que los contenedores comparten.
+2. Mantén Docker Engine Actualizado: Si es posible, se debe de actualizar regularmente el Docker Engine (Daemon) a la última versión estable. Las actualizaciones de Docker a menudo incluyen correcciones de seguridad importantes y mejoras.
+3. Refuerza la Configuración del Daemon Docker: Si se necesita el acceso remoto a la API de Docker, se debede configurar para que use TLS (Transport Layer Security) con certificados de confianza para asegurar la comunicación y autenticar clientes.
+
+
+<a id="seguridad-de-los-contenedores"></a>
+### Seguridad de los contenedores
+Una vez que el contenedor se está ejecutando, hay varias medidas que puedes tomar para limitar su impacto potencial en caso de compromiso y para asegurar su funcionamiento.
+
+1. Ejecuta contenedores como usuarios No-Root
+   
+* `Principio de Mínimos Privilegios`: Esta es la regla de oro. Por defecto, los procesos dentro de un contenedor se ejecutan como root a menos que se especifique lo contrario. Si un atacante compromete un contenedor que se ejecuta como root, es mucho más fácil escalar privilegios al host.
+* `Solución`:
+  - En el Dockerfile, se debe de usar la instrucción USER para definir un usuario no-root que ejecutará la aplicación.
+  - Crea un usuario no-root dentro del contenedor si la imagen base no lo proporciona.
+```
+# Ejemplo: Ejecutar como usuario no-root
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+# Crea un grupo y usuario no-root
+RUN addgroup -g 1001 appgroup && adduser -u 1001 -G appgroup -D appuser
+USER appuser # Todas las instrucciones RUN, CMD, ENTRYPOINT posteriores se ejecutan como 'appuser'
+EXPOSE 3000
+CMD ["npm", "start"]
+```
+
+2. No usar el modo privilegiado (--privileged): Correr un contenedor con --privileged le **da todos los privilegios del host, incluyendo acceso a dispositivos del host**. Es casi equivalente a ejecutar un proceso directamente en el host sin Docker.
+
+3. Utiliza Volúmenes de Sólo Lectura (:ro):  si el contenedor solo necesita leer los datos, hay que montarlos como solo lectura (-v /host/path:/container/path:ro). Esto previene que un contenedor comprometido escriba en archivos del host o del volumen de forma maliciosa
+
