@@ -157,16 +157,6 @@
 <a id="conceptos-fundamentales-docker"></a>
 ### Conceptos Fundamentales
 
-<a id="instalacion-configuracion-docker"></a>
-## Instalación y Configuración de Docker
-<a id="requisitos-sistema-docker"></a>
-### Requisitos del Sistema
-<a id="instalacion-plataformas-docker"></a>
-### Instalación en Diferentes Plataformas (Linux, Windows, macOS)
-<a id="verificacion-instalacion-docker"></a>
-### Verificación de la Instalación
-<a id="configuracion-post-instalacion-docker"></a>
-### Configuración Post-Instalación (Usuario sin `sudo`, Daemon)
 
 <a id="imagenes-docker"></a>
 ## Imágenes de Docker
